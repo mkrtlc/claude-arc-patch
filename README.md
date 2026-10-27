@@ -73,6 +73,7 @@ No original Claude extension code is modified. Only additional files are injecte
 | `arc-tabs-patch.js` | Patches `chrome.tabs.query` so the sidepanel can find the active tab from an iframe context |
 | `arc-tabgroups-shim.js` | Emulates the Chrome Tab Groups API in memory (loaded in the service worker **and** the sidepanel page, synced via `storage.session`) so browser automation works — see below |
 | `arc-cowork-patch.js` | Forces the classic sidepanel (sets `preferCoworkExperience=false`) so the panel never embeds the `claude.ai` cowork iframe that Arc refuses — see below |
+| `arc-profile-names.py` | Run by `patch.sh` (macOS): reads each Arc profile's connection id from its own extension storage, read-only, so every profile shows up in Claude under its own name — see below |
 | `theme-init.js` | Extracted inline script for dark/light mode (CSP compliance) |
 
 ### The Tab Groups problem (browser automation)
@@ -157,6 +158,27 @@ used; `sw-patch.js` overrides `chrome.sidePanel` unconditionally. The original s
 `action.onClicked` / `commands.onCommand` listeners call `chrome.sidePanel.open()`, so `sw-patch.js` must not
 register its own listeners as well, or every click toggles the panel twice (open, then instantly close).
 
+### Several Arc profiles: which "Browser" is which?
+
+Each Arc profile that loads `claude-arc-patched` runs its own copy of the extension, and each copy registers
+with Claude as a separate browser. They all report the same default name (the computer name), so Claude lists
+them as **"Browser 1", "Browser 2", …** — numbered by position, so the numbers shift as profiles connect and
+disconnect. It is easy to connect Claude to the wrong profile (and then find yourself logged out of every site),
+or to answer the pairing prompt in the wrong profile and give it another profile's name.
+
+`patch.sh` names every connection after its Arc profile:
+
+- `arc-profile-names.py` reads each profile's name from its `Preferences` and the connection id
+  (`bridgeDeviceId`) from that profile's `Local Extension Settings/<extension id>` LevelDB, using a small
+  read-only LevelDB/Snappy reader (standard library only), and writes `arc-profile-names.json`
+  (`{device id: "Arc – <profile name>"}`) into `claude-arc-patched/`.
+- At startup `sw-patch.js` looks up its own `bridgeDeviceId` and stores the matching name as the connection's
+  display name. The extension sends it when it connects, so the name appears on its next connection.
+- A name you chose yourself in the pairing prompt is kept. Run `./patch.sh --rename` to replace those too (for
+  example after naming the wrong profile); the rename is applied once per patch run.
+- A profile only has a connection id after the extension has run there once. Load the extension in every
+  profile you use, then re-run `./patch.sh` and reload it.
+
 ### Architecture
 
 ```
@@ -233,6 +255,11 @@ register its own listeners as well, or every click toggles the panel twice (open
 
 **Patch didn't seem to take after an update:**
 - Always patch against a **fresh, vanilla** Claude extension. Re-install/enable the official Claude extension in Chrome, `git pull` this repo (so you have the latest patch files), then re-run `./patch.sh` and **Load unpacked** the rebuilt `claude-arc-patched/` again in Arc (a reload alone may not pick up new files).
+
+**Claude lists several "Browser N" entries and drives the wrong Arc profile:**
+- Each Arc profile is a separate connection (see *Several Arc profiles* above). Re-run `./patch.sh` (add `--rename`
+  if a profile carries a name you gave the wrong one) and reload the extension in each profile; the list then shows
+  `Arc – <profile name>`. Until then, pick the browser by its device id rather than its "Browser N" label.
 
 **"Operation not permitted" when running patch.sh:**
 ```bash

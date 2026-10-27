@@ -13,6 +13,18 @@ SW_PATCH_JS="$SCRIPT_DIR/sw-patch.js"
 ARC_TABS_PATCH_JS="$SCRIPT_DIR/arc-tabs-patch.js"
 ARC_TABGROUPS_SHIM_JS="$SCRIPT_DIR/arc-tabgroups-shim.js"
 ARC_COWORK_PATCH_JS="$SCRIPT_DIR/arc-cowork-patch.js"
+ARC_PROFILE_NAMES_PY="$SCRIPT_DIR/arc-profile-names.py"
+
+# --rename: also replace connection names chosen by hand in the pairing prompt
+RENAME_PROFILES=""
+ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --rename) RENAME_PROFILES="--rename" ;;
+    *) ARGS+=("$arg") ;;
+  esac
+done
+set -- ${ARGS[@]+"${ARGS[@]}"}
 
 # ── Colors ───────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -85,6 +97,7 @@ echo ""
 [ -f "$ARC_TABS_PATCH_JS" ] || fail "arc-tabs-patch.js not found in $SCRIPT_DIR"
 [ -f "$ARC_TABGROUPS_SHIM_JS" ] || fail "arc-tabgroups-shim.js not found in $SCRIPT_DIR"
 [ -f "$ARC_COWORK_PATCH_JS" ] || fail "arc-cowork-patch.js not found in $SCRIPT_DIR"
+[ -f "$ARC_PROFILE_NAMES_PY" ] || fail "arc-profile-names.py not found in $SCRIPT_DIR"
 
 # Find or accept source path
 SOURCE_DIR=""
@@ -108,7 +121,7 @@ else
     echo "  4. The extension is at:"
     echo "     macOS: ~/Library/Application Support/Google/Chrome/Default/Extensions/<ID>/<version>"
     echo ""
-    echo "Usage: $0 /path/to/claude/extension"
+    echo "Usage: $0 [--rename] [/path/to/claude/extension]"
     exit 1
   fi
 fi
@@ -327,6 +340,22 @@ PYEOF
 
 ok "manifest.json patched"
 
+# ── Name each Arc profile's connection ──────────────────────────
+# Every Arc profile running the extension shows up in Claude as a separate
+# browser with the same default name ("Browser 1..N"). Read each profile's
+# connection id from its own extension storage (read-only) and map it to the
+# profile name; sw-patch.js applies it. Profiles that never ran the extension
+# have no id yet: re-run patch.sh after loading it there once.
+
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  info "Naming Arc profile connections..."
+  if python3 "$ARC_PROFILE_NAMES_PY" "$OUTPUT_DIR/arc-profile-names.json" $RENAME_PROFILES; then
+    ok "arc-profile-names.json written"
+  else
+    warn "Could not read Arc profile connections; connections keep their default names"
+  fi
+fi
+
 # ── Summary ──────────────────────────────────────────────────────
 
 echo ""
@@ -343,6 +372,10 @@ echo "  2. Enable 'Developer mode' (top right)"
 echo "  3. Click 'Load unpacked'"
 echo "  4. Select: $OUTPUT_DIR"
 echo "  5. Press Cmd+E (Mac) or Ctrl+E to toggle Claude panel"
+echo ""
+echo "Each Arc profile's connection is named after the profile (e.g. \"Arc – Work\")"
+echo "once the extension reconnects there. Run with --rename to also replace names"
+echo "picked by hand in the pairing prompt."
 echo ""
 echo -e "${YELLOW}Note: Disable the original Claude extension to avoid conflicts.${NC}"
 echo ""

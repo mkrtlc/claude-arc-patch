@@ -215,3 +215,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 });
+
+// ── Per-profile connection name ─────────────────────────────────────
+// Every Arc profile that loads this extension registers with Claude as a
+// separate browser, and all of them report the same default name (the
+// computer name), so they are listed as "Browser 1..N" and are easy to mix
+// up. patch.sh writes arc-profile-names.json ({device id: "Arc – <profile>"},
+// read from each profile's own extension storage); apply the entry for this
+// copy. A name the user chose in the pairing prompt is kept, unless patch.sh
+// was run with --rename. The extension sends the name when it connects, so a
+// change shows up on its next connection.
+(async () => {
+  try {
+    const res = await fetch(chrome.runtime.getURL("arc-profile-names.json"));
+    if (!res.ok) return;
+    const { names = {}, rename = false, generatedAt = 0 } = await res.json();
+    const d = await chrome.storage.local.get(["bridgeDeviceId", "bridgeDisplayName", "arcProfileName", "arcProfileRenameAt"]);
+    const name = d.bridgeDeviceId && names[d.bridgeDeviceId];
+    if (!name) return;
+    const current = d.bridgeDisplayName;
+    // A user-chosen name is one we did not set ourselves.
+    const userChosen = !!current && current !== d.arcProfileName;
+    const forceRename = rename && d.arcProfileRenameAt !== generatedAt;
+    if (current === name || (userChosen && !forceRename)) return;
+    await chrome.storage.local.set({ bridgeDisplayName: name, arcProfileName: name, arcProfileRenameAt: generatedAt });
+    console.log("[Claude Arc Patch] connection name set to", JSON.stringify(name));
+  } catch (e) {}
+})();
